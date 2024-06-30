@@ -1,0 +1,394 @@
+---
+title: "Projet GLM"
+author : RABEARISOA Haingo
+date : 30 Juin 2024
+output: html_notebook
+---
+
+# I. EXPLORATION DES DONNEES
+
+```{r}
+library(caret)
+```
+
+```{r}
+library(car)
+```
+
+
+## 1.
+### a. Chargement du jeu de données
+```{r}
+d <- read.csv("C:/Users/rhhai/Documents/meteo.train.csv", header = TRUE, sep = ",", dec=".")
+attach(d)
+```
+
+### b. Visualisation des premières lignes
+```{r}
+head(d)
+```
+### c. Description statistique sommaire
+```{r}
+summary(d)
+```
+
+Ce projet porte sur l'étude de la météorologie à Bâle (en Suisse) entre 2010 et 2018. La variable à expliquer est l'absence/présence de pluie du lendemain. Pour cela, nombreux sont les variables explicatives de notre donnée mais nous ne prennons que les variables pertinentes pour la modélisation. Ainsi, pour les étapes qui suivent, nous allons étudier les variables explicatives pour préparer la modélisation.  
+
+Le sommaire montre la présence de 3 colonnes numériques séparées (Year, Month, Day) qui peuvent être combinées en une seule (en date).  
+
+Les colonnes suivantes ne donnent pas beaucoup d'information pour notre modélisation car leurs valeurs sont constantes à 0 : 
+
++ Hour
+
++ Minute
+
+### d. Etude des variables
+#### - Transformation des 3 colonnes Year, Month, Day en une colonne Day 
+nous allons transformer la colonne Day en une colonne qui indique la date exacte du jour de prélèvement. 
+```{r}
+# Transformer les 3 colonnes Year, Month, Day en date
+d1 <- d #afin de garder les données d originales
+d1$Day <- as.Date(with(d, paste(d$Year, d$Month, d$Day, sep = "-")), format = "%Y-%m-%d")
+
+```
+
+#### - Suppression des variables explicatives non pertinentes
+Nous pouvons maintenant supprimer les colonnes Year et Month car la date exacte du jour de prélèvement est combinée dans la colonne Day. 
+
+```{r}
+d2 <- d1[, -2]   # enlever la colonne Year
+d3 <- d2[,-2]    # enlever la colonne Month
+
+```
+
+Le sommaire montre que la colonne Hour et Minute ne sont remplis que par des 0. Donc, ces colonnes n'apportent pas d'informations. Nous allons les supprimer de nos données.
+
+```{r}
+d4 <- d3[,-3]    # enlever la colonne Hour
+d5 <- d4[,-3]    # enlever la colonne Minute
+```
+
+#### - Les variables sont-elles catégorielles ou quantitatives?
+```{r}
+str(d5)
+```
+Cela indique que toutes les variables explicatives sont numériques et la variable à expliquer est booléenne.
+
+#### - Effectif de chaque variable booléenne
+```{r}
+table(d5$pluie.demain)
+```
+Cela indique qu'il y avait plus de jour de pluie que de temps sec dans cette région etre 2010 et 2018. 
+
+## 2. Etude de la corrélation des variables explicatives
+```{r}
+d6 <- d5[,-2]   #enlever la date car X représente déjà la date
+
+cor_matrice <- cor(d6) #matrice de corrélation
+options(max.print = 10000)
+symnum(cor_matrice, abbr.colnames = FALSE)
+
+```
+
+Ce résultat indique les intervalles des coefficients de corrélation entre les variables et s'explique comme suit.  
+
+Pour les variables ayant les coefficients de corrélation :  
+
++ compris entre 0 et 0.3, R n'affiche pas d'indication " "  
+
++ compris entre 0.3 et 0.6, R indique "."  
+
++ compris entre 0.6 et 0.8, R indique ","  
+
++ compris entre 0.8 et 0.9, R indique "+"  
+
++ compris entre 0.9 et 0.95, R indique "*"  
+
++ compris entre 0.95 et 1, R indique "B"  
+
++ et R indique 1 pour le coefficient de corrélation égal 1.
+
+Rappelons que le coefficient de corrélation calculé ici est obtenu à partir de la formule suivante :
+
+$$r=\frac{\operatorname{Cov}(X, Y)}{\sigma_X \sigma_Y}$$
+C'est le rapport de la covariance des deux variables avec le produit de leur écart type.
+
+Si r est compris entre -0.5 et 0.5, cela signifie que la corrélation entre les 2 variables est faible sinon, il y a une corrélation élevée.  
+
+__Identifions donc les variables ayant de forte corrélation.__  
+
+On remarque une forte correlation entre les variables mini, max et moyenne. Ce qui est normal. Les variables à 80m et 10m sont aussi très corrélées entre eux.  
+
+Nous allons donc identifer les corrélations très élevées et supprimer une des 2 variables corrélées.
+
+
+```{r}
+#Identification des corrélations très élevées, prenons à partir de 0.80
+cor_elevee <- findCorrelation(cor_matrice, cutoff = 0.80)
+
+# Afficher les indices des variables à supprimer
+print(cor_elevee)
+
+# Supprimer les variables fortement corrélées
+d7 <- d6[, -cor_elevee]
+
+```
+Les indices cités ci-dessus sont celles des variables qui ont été supprimées en raison d'une forte corrélation avec les autres variables.  
+
+Il nous reste donc les variables dont les coefficients de corrélation sont inférieurs à 0.80.
+
+# II. MODELISATION
+## 1. modèle initial
+### a. Création du modèle
+La variable à expliquer étant une variable booléenne, une regression logistique suivant la loi binomiale sera adaptée la modélisation
+```{r}
+reg_toutes <- glm(pluie.demain ~ ., data=d7, family= binomial)   # modèle avec toutes les variables
+summary(reg_toutes)
+```
+Une regresssion logistique avec toutes les variables de la donnée finale a été réalisée et on remarque qu'il y a des variables encore plus pertinentes que d'autres (celles ayant les p-values très faibles) et qu'on peut encore affiner le modèle obtenu et choisir le modèle le plus adapté aux données.
+
+### b. Examen des résidus 
+Pour examiner les résidus, nous allons calculer le ratio entre la déviance résiduelle et le nombre de degré de liberté
+Ratio = déviance résiduelle/nombre de degré de liberté
+
+```{r}
+1286.8/1155
+```
+Ce ratio est proche de 1 cela confirme que le modèle logistique correspond à notre donnée.
+
+### c. Vérification de la multicolinéarité
+
+```{r}
+vif(reg_toutes)
+```
+
+Avec une vif supérieure à 5, la variable Relative.Humidity.daily.mean..2.m.above.gnd. sera enlevée de la regression initiale. 
+
+```{r}
+reg_1 <- glm(pluie.demain ~ .-Relative.Humidity.daily.mean..2.m.above.gnd., data=d7, family= binomial)  
+summary(reg_1)
+```
+### d. Revérification
+```{r}
+1287.1/1156  #Ratio = déviance résiduelle/nombre de degré de liberté
+vif(reg_1)   #Revérification de la multicolinéarité 
+```
+
+Le problème de multicolinéarité est résolu (vif < 5) en enlevant la variable Relative.Humidity.daily.mean..2.m.above.gnd. On peut donc garder ce modèle comme modèle inital. 
+
+### d. Rapports de cote
+Le rapport de cote entre les deux individus suivants :
+$$x \text { et } \tilde{x}$$
+
+se calcule comme suit :
+
+$$\operatorname{OR}(x, \tilde{x})=\frac{\operatorname{odds}(x)}{\operatorname{odds}(\tilde{x})}=\frac{\frac{p(x)}{1-p(x)}}{\frac{p(\tilde{x})}{1-p(\tilde{x})}}$$
+Ce qui revient à calculer l'exponentiel des coefficients.
+
+```{r}
+exp(coef(reg_1))
+```
+
+Un rapport de cotes > 1 indique que la probabilité augmente, et < 1 indique qu'elle diminue. S'il est égal à 1, la variable ne change pas la probabilité. 
+
+### e. Déviance
+La déviance d'un modèle s'écrit M_beta s'écrit :
+$$D_{M_\beta}=2\left(\mathcal{L}_{\text {sat }}-\mathcal{L}_n(\hat{\beta})\right)$$
+La déviance est égale à 2 fois une différence de log-vraisemblance. Elle constitue un écart en terme de log-vraisemblance entre le modèle saturé d'ajustement maximum et le modèle considéré.
+
+```{r}
+reg_1$deviance
+```
+
+
+## 2. Deuxième modèle
+### a. Création du modèle
+Nous avons vu que le modèle initial peut être amélioré. Nous allons proposer un deuxième modèle. Nous allons donc choisir les variables pertinentes pour le modèle.
+
+```{r}
+reg_2 <- glm(pluie.demain ~ X + Shortwave.Radiation.daily.sum..sfc. + Wind.Direction.daily.mean..80.m.above.gnd. + Wind.Direction.daily.mean..900.mb. + Mean.Sea.Level.Pressure.daily.max..MSL. + Medium.Cloud.Cover.daily.max..mid.cld.lay. + Wind.Speed.daily.max..80.m.above.gnd. , data=d7, family= binomial)  
+summary(reg_2)
+```
+
+### b. Examen des résidus
+Ratio = déviance résiduelle/nombre de degré de liberté
+
+```{r}
+1326/1172
+```
+### c. Vérification de la multicolinéarité
+```{r}
+vif(reg_2)
+```
+Les coefficients indiqués étant tous proche de 1 donc il n'y a pas de multicolinéarité.
+
+### d. Rapports de cote
+
+```{r}
+exp(coef(reg_2))
+```
+
+### e. Déviance 
+
+```{r}
+reg_2$deviance
+```
+
+## 3. Comparaison du modèle réduit avec le modèle complet 
+
+```{r}
+anova(reg_2, reg_1, test = "Chisq")
+```
+La déviance consitue un écart en terme de log-vraisemblance entre le modèle réduit et complet.
+
+$$-2\left(\mathcal{L}_n\left(\hat{\mathcal{M}}_1\right)-\mathcal{L}_n\left(\hat{\mathcal{M}}_2\right)\right) \xrightarrow{\mathcal{L}} \chi_{p_2-p_1}^2$$
+
+Le test indique que la p-value est inférieur à 0.05, ce qui indique que les variables du modèle complet apportent une amélioration à l'ajustement du modèle. Ainsi, on garde le modèle initiale.   
+
+Nous avons fait une sélection de modèle manuelle mais que propose la sélection automatique de modèle ?
+
+## 4. Sélection automatique de modèle
+### a. Création du modèle
+
+Nous allons utiliser la méthode descendante pour la sélection automatique du modèle.
+
+```{r}
+model_desc <- step(reg_1, direction = "backward")
+```
+
+Ici, la sélection automatique se fait en fonction du critère AIC :
+$$A I C(\mathcal{M})=-2 \mathcal{L}_n(\hat{\mathcal{M}})+2 p$$
+
+Ayant le critère AIC le plus faible, modèle proposé par la sélection automatique est le suivant :
+
+```{r}
+reg3 <- glm(pluie.demain ~ X + Temperature.daily.mean..2.m.above.gnd. + Medium.Cloud.Cover.daily.mean..mid.cld.lay. + 
+    Shortwave.Radiation.daily.sum..sfc. + Wind.Direction.daily.mean..80.m.above.gnd. + 
+    Wind.Direction.daily.mean..900.mb. + Relative.Humidity.daily.max..2.m.above.gnd. + 
+    Mean.Sea.Level.Pressure.daily.max..MSL. + Total.Cloud.Cover.daily.min..sfc. + 
+    High.Cloud.Cover.daily.max..high.cld.lay. + Medium.Cloud.Cover.daily.max..mid.cld.lay. + 
+    Low.Cloud.Cover.daily.max..low.cld.lay. + Wind.Speed.daily.max..80.m.above.gnd., data=d7, family= binomial)
+summary(reg3)
+
+```
+
+### b. Ratio entre la déviance résiduelle et le nombre de degré de liberté
+Ratio = déviance résiduelle/nombre de degré de liberté
+```{r}
+1291.8/1166
+```
+
+### c. Vérification de la multicolinéarité
+
+```{r}
+vif(reg3)
+```
+
+Les coefficients indiqués étant tous inférieur à 5 donc il n'y a pas de multicolinéarité.
+
+### d. Rapports de cote
+
+```{r}
+exp(coef(reg3))
+```
+
+On remarque des variables augmentent (>1) et diminuent (<1) la probabilité que alors que d'autres (proche de 1) pour le modèle.
+
+### e. Déviance
+```{r}
+reg3$deviance
+```
+
+
+## 5. Choix du modèle
+### a. Comparaison des modèles
+```{r}
+anova(reg_1, reg3, test = "Chisq")
+```
+
+Le test indique que la p-value est supérieure à 0.05, ce qui indique que le modèle proposé par la sélection automatique (reg3) propose un meilleur ajustement.  
+
+
+# III. PREDICTION
+Afin de vérifier l'ajustement de la prédiction du modèle retenu, nous allons d'abord faire une prédiction avec les données d'entrainement et tester ses résultats avec les vrais résultats, puis réaliser la prédiction avec les données tests.
+
+## 1. Test de de la prédiction sur les données d'apprentissage
+### a. Prédiction
+```{r}
+pred1_proba <- predict(reg3, type= "response", newdata = d7)
+head(pred1_proba)
+d8 <- cbind(d7, pred1_proba)
+```
+
+### b. Résultat de la prédiction en variable booléenne
+```{r}
+pred1_bool <- ifelse(pred1_proba < 0.5, FALSE, TRUE)
+table(pred1_bool)
+```
+
+### c. Matrice de confusion
+```{r}
+tab1 <- table(Predicted = pred1_bool, actual = d8$pluie.demain)
+tab1
+```
+Ce matrice indique les erreurs du modèle : les "faux positifs" et les "faux négatifs".
+
+### d. Taux de faux prédiction du modèle
+```{r}
+(176+142)/(403+176+142+459)*100
+```
+Le modèle fait 26% d'erreurs de prédiction. Ce qui est acceptable.
+
+## 2. Prédiction sur les données d'apprentissage
+### a. Chargement du jeu de données
+```{r}
+d_test <- read.csv("C:/Users/rhhai/Documents/meteo.test.csv", header = TRUE, sep = ",", dec=".")
+```
+
+### b. Prédiction
+```{r}
+pred2_proba <- predict(reg3, type= "response", newdata = d_test)
+head(pred2_proba)
+```
+
+### c. Résultat de la prédiction en variable booléenne
+```{r}
+pred2_bool <- ifelse(pred2_proba < 0.5, FALSE, TRUE)
+table(pred2_bool)
+
+```
+
+### d. Données avec le résultat de la prédiction
+```{r}
+d_test_pred <- cbind(d_test, pred2_bool)
+head(d_test_pred)
+```
+
+### e. Téléchargement du fichier csv
+```{r}
+write.table(d_test_pred, "C:/Users/rhhai/Documents/d_test_pred.csv", row.names = FALSE, sep = ",", dec="." )
+```
+
+
+# IV. CONCLUSION
+
+Le logit de la probabilité de chaque observation est le suivant :
+logit(p(x)) = 52.9071479179 + 0.0001810591xX + 0.0276011590xTemperature.daily.mean..2.m.above.gnd. + 0.0068468594xMedium.Cloud.Cover.daily.mean..mid.cld.lay. + 0.0001343945xShortwave.Radiation.daily.sum..sfc. -0.0035692942xWind.Direction.daily.mean..80.m.above.gnd. + 0.0050847060xWind.Direction.daily.mean..900.mb + 0.0146065818xTotal.Cloud.Cover.daily.min..sfc. -0.0568795079xMean.Sea.Level.Pressure.daily.max..MSL. + 0.0081227067xTotal.Cloud.Cover.daily.min..sfc. + 0.0034793362xHigh.Cloud.Cover.daily.max..high.cld.lay. + 0.0084534157xMedium.Cloud.Cover.daily.max..mid.cld.lay. + 0.0054980902xLow.Cloud.Cover.daily.max..low.cld.lay. + 0.0332759280xWind.Speed.daily.max..80.m.above.gnd.  
+
+Le modèle avec que les variables significatives, ayant les p-values très basses, n'est pas forcément le meilleur modèle qui s'ajuste bien aux données. Les variables qui semblent avoir un rapport de cote proche de 1 peuvent être utiles à l'ajustement du modèle.  
+
+Par rapport à la regression linéaire, plusieurs notions ont été apprises comme la cote anglaise (qui est une autre expression de la probabilité), le rapport de cote, la déviance, ... mais la méthode générale reste inchangée comme la vérification de la multicolinéarité, examen du résidus.   
+
+Enfin, le modèle linéaire généralisé offre plusieurs  possibilités de modélisation (Bernouilli/binomiale, Poisson,Gamma) et y compris le modèle linéaire (gaussien) avec la fonction glm(). 
+
+
+
+
+
+
+
+
+
+
+
+
